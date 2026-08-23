@@ -67,7 +67,7 @@ jobs:
           - name: MemoryPanel
             image: memory-panel
             context: ./MemoryPanel
-            file: ./MemoryPanel/docker/local/Dockerfile.local
+            file: ./.github/workflows/Dockerfile.memory-panel
           - name: MemoryProxy
             image: memory-proxy
             context: ./MemoryProxy
