@@ -1,0 +1,161 @@
+name: tencentdb-agent-memory
+
+services:
+  memory-core:
+    image: ${MEMORY_CORE_IMAGE}
+    ports:
+      - "${MEMORY_CORE_PORT}:8420"
+    volumes:
+      - memory-core-data:/data/tdai-memory
+    environment:
+      NODE_ENV: production
+      TDAI_GATEWAY_HOST: 0.0.0.0
+      TDAI_GATEWAY_PORT: 8420
+      TDAI_DATA_DIR: /data/tdai-memory
+      TDAI_LLM_BASE_URL: ${MEMORY_LLM_BASE_URL}
+      TDAI_LLM_API_KEY: ${MEMORY_LLM_API_KEY}
+      TDAI_LLM_MODEL: ${MEMORY_LLM_MODEL}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8420/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  memory-knowledge:
+    image: ${MEMORY_KNOWLEDGE_IMAGE}
+    ports:
+      - "${KNOWLEDGE_PORT}:8421"
+    volumes:
+      - knowledge-data:/app/data
+    environment:
+      NODE_ENV: production
+      PORT: 8421
+      KNOWLEDGE_DATA_DIR: /app/data
+      KNOWLEDGE_DB_PATH: /app/data/knowledge.db
+      KNOWLEDGE_PUBLIC_BASE_URL: ${KNOWLEDGE_PUBLIC_BASE_URL}
+      TMC_CALLBACK_URL: ${TMC_CALLBACK_URL}
+      LLM_MODE: ${KNOWLEDGE_LLM_MODE}
+      LLM_API_KEY: ${MEMORY_LLM_API_KEY}
+      LLM_BASE_URL: ${MEMORY_LLM_BASE_URL}
+      LLM_MODEL: ${MEMORY_LLM_MODEL}
+    command:
+      - start
+      - --public-url=${KNOWLEDGE_PUBLIC_BASE_URL}
+      - --llm-mode=${KNOWLEDGE_LLM_MODE}
+      - --llm-key=${MEMORY_LLM_API_KEY}
+      - --llm-base-url=${MEMORY_LLM_BASE_URL}
+      - --llm-model=${MEMORY_LLM_MODEL}
+    depends_on:
+      memory-core:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8421/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  memory-panel:
+    image: ${MEMORY_PANEL_IMAGE}
+    configs:
+      - source: panel-metadata
+        target: /app/config/metadata-instances.json
+    ports:
+      - "${PANEL_PORT}:8123"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8123
+      UI_DIST_DIR: ./web/dist
+      METADATA_INSTANCES_CONFIG: /app/config/metadata-instances.json
+      KNOWLEDGE_SERVICE_URL: http://memory-knowledge:8421
+      KNOWLEDGE_AUTH_TOKEN: ${KNOWLEDGE_AUTH_TOKEN}
+      KNOWLEDGE_TIMEOUT_MS: 30000
+      REMOTE_INSTANCE_URL: http://memory-core:8420
+      KNOWLEDGE_LLM_BINDING_SYNC: "false"
+    depends_on:
+      memory-core:
+        condition: service_healthy
+      memory-knowledge:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8123/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  memory-proxy:
+    image: ${MEMORY_PROXY_IMAGE}
+    ports:
+      - "${PROXY_PORT}:8096"
+    configs:
+      - source: proxy-config
+        target: /data/config.yaml
+    volumes:
+      - proxy-data:/data/tdai-memory-proxy
+    depends_on:
+      memory-core:
+        condition: service_healthy
+      memory-panel:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8096/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  memory-core-data:
+  knowledge-data:
+  proxy-data:
+
+configs:
+  panel-metadata:
+    content: |
+      {
+        "instances": [
+          {
+            "id": "default",
+            "name": "default",
+            "gateway_endpoint": "http://memory-core:8420",
+            "proxy_endpoint": "http://localhost:8096",
+            "api_key": "${MEMORY_CORE_API_KEY}"
+          }
+        ]
+      }
+  proxy-config:
+    content: |
+      server:
+        host: 0.0.0.0
+        port: 8096
+        forwardTimeoutMs: 600000
+      upstream:
+        url: "${PROXY_UPSTREAM_URL}"
+        apiKey: "${PROXY_UPSTREAM_API_KEY}"
+      log:
+        file: ""
+        level: info
+        backend: console
+      tdai:
+        enabled: false
+        endpoint: "http://memory-core:8420"
+        serviceId: default
+        memory:
+          enabled: false
+      auth:
+        enabled: false
+      sessionInit:
+        enabled: false
+      costGuard:
+        enabled: false
+      injection:
+        enabled: false
+      redis:
+        enabled: false
